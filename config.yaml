@@ -13,12 +13,12 @@ kassette-server:
 kassette-agent:
   uid: camunda
 tables:
-  service_catalogue:
-    track_column: id
-    id_column: id
-#  act_hi_actinst:
-#    track_column: start_time_
-#    id_column: id_
+  act_hi_actinst:
+    track_column: start_time_
+    id_column: id_
 #  act_hi_detail:
 #    track_column: time_
 #    id_column: id_    
+# service_catalogue:
+#   track_column: id
+#   id_column: id

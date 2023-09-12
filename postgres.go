@@ -103,11 +103,70 @@ func startWorker(activitiInstances []map[string]interface{}) {
 	submitPayload(jsonData, "batch")
 }
 
+func get_new_records_by_id(dbHandler *sql.DB, tableName string, dbBatchSize string, trackPosition int, idColumn string) (int64, []map[string]interface{}) {
+	var lastTrackPosition int64
+	var ok bool
+
+	query := fmt.Sprintf("SELECT * FROM %s where %s > $1 order by %s;", tableName, idColumn, dbBatchSize)
+	// Execute the SQL statement and retrieve the rows
+	rows, err := dbHandler.QueryContext(context.Background(), query, trackPosition)
+	if err != nil {
+		log.Fatal(err)
+	}
+	data := make([]map[string]interface{}, 0)
+
+	// Iterate over the rows
+	for rows.Next() {
+		// Create a map to hold the row data
+		record := make(TableRow)
+
+		// Get the column names
+		columns, err := rows.Columns()
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		// Create a slice to hold the column values
+		values := make([]interface{}, len(columns))
+		for i := range values {
+			values[i] = new(interface{})
+		}
+
+		// Scan the row values into the slice
+		err = rows.Scan(values...)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		// Convert the row values into a JSON object
+		for i, column := range columns {
+			val := *(values[i].(*interface{}))
+			record[column] = val
+		}
+		//Adding Kassette Metadata
+		record["kassette_data_agent"] = "camunda"
+		record["kassette_data_type"] = tableName
+
+		data = append(data, record)
+		lastTrackPosition, ok = record[idColumn].(int64)
+		if !ok {
+			log.Fatal("Invalid value type int64")
+		}
+	}
+	// Check for any errors during iteration
+	err = rows.Err()
+	if err != nil {
+		log.Fatal(err)
+	}
+	return lastTrackPosition, data
+}
+
 func get_new_records(dbHandler *sql.DB, tableName string, dbBatchSize string, trackColumn string, trackPosition time.Time, idColumn string, idExclude []string) (time.Time, []string, []map[string]interface{}) {
 	var lastTrackPosition time.Time
 	fetchedIds := make([]string, 0)
 	query := fmt.Sprintf("SELECT * FROM %s where %s > $1 and %s not in ($2) limit %s;", tableName, trackColumn, idColumn, dbBatchSize)
 	// Execute the SQL statement and retrieve the rows
+	//log.Printf(fmt.Sprintf("%s, %s, %s", query, trackPosition, strings.Join(idExclude, ", ")))
 	rows, err := dbHandler.QueryContext(context.Background(), query, trackPosition, strings.Join(idExclude, ", "))
 	if err != nil {
 		log.Fatal(err)
@@ -208,10 +267,10 @@ func main() {
 	}
 
 	psqlInfo := GetConnectionString()
-	lastTimestamp := time.Now().Add(-2 * time.Hour) //start ingesting data 2 hours back after restart
-
+	lastTimeStamp := time.Now().Add(-2 * time.Hour) //start ingesting data 2 hours back after restart
+	lastStamp := 0
 	batchSubmit := make([]map[string]interface{}, 0)
-	kassetteBatchSize := viper.GetInt("kassette-server.batch_size")
+	kassetteBatchSize := viper.GetInt("kassette-server.batchSize")
 	//read tables settings into Map
 	var trackTables map[string]map[string]string
 	var trackTablesTs map[string]map[string]interface{}
@@ -220,14 +279,22 @@ func main() {
 	for table, _ := range viper.GetStringMapString("tables") {
 		trackTablesTs[table] = make(map[string]interface{})
 		trackTables[table] = make(map[string]string)
-		trackTablesTs[table]["lastTimestamp"] = lastTimestamp
-		trackTablesTs[table]["lastFetched"] = make([]string, 0)
 		for tableSettingKey, tableSettingValue := range viper.GetStringMapString("tables." + table) {
 			trackTables[table][tableSettingKey] = tableSettingValue
 		}
+
+		if trackTables[table]["track_column"] == trackTables[table]["id_column"] {
+			trackTables[table]["tracking"] = "id"
+			trackTablesTs[table]["lastId"] = lastStamp
+		} else {
+			trackTables[table]["tracking"] = "time"
+			trackTablesTs[table]["lastTimeStamp"] = lastTimeStamp
+			trackTablesTs[table]["lastFetched"] = make([]string, 0)
+		}
+
 	}
 
-	dbBatchSize := viper.GetString("database.batch_size")
+	dbBatchSize := viper.GetString("database.batchSize")
 	log.Printf("Connecting to Database: %s\n", psqlInfo)
 
 	db, err := sql.Open("postgres", psqlInfo)
@@ -235,28 +302,6 @@ func main() {
 		log.Fatal(err)
 	}
 	defer db.Close()
-
-	// initialise the tables and transfer schema to kassette-server
-	var advancedConfig SourceAdvancedConfig
-	advancedConfig.Source = make([]TableConfig, 0)
-
-	for table, _ := range trackTables {
-		schema := get_table_schema(db, table)
-		var tableConfig TableConfig
-		tableConfig.Agent = "camunda"
-		tableConfig.Type = table
-		tableConfig.Config = schema
-		advancedConfig.Source = append(advancedConfig.Source, tableConfig)
-	}
-
-	jsonData, err := json.Marshal(advancedConfig)
-	if err != nil {
-		log.Fatal(err)
-		return
-	}
-
-	log.Printf("Json object: %s", string(jsonData))
-	submitPayload(jsonData, "configtable")
 
 	// Create a ticker that polls the database every 10 seconds
 	ticker := time.NewTicker(10 * time.Second)
@@ -266,29 +311,32 @@ func main() {
 		select {
 		case <-ticker.C:
 			for table, tableData := range trackTables {
-				lastFetched, ok := trackTablesTs[table]["lastFetched"].([]string)
-				if !ok {
-					log.Fatal("Type Error Array of strings")
+				if tableData["tracking"] == "time" {
+					lastFetched, ok := trackTablesTs[table]["lastFetched"].([]string)
+					if !ok {
+						log.Fatal("Type Error Array of strings")
+					}
+					lastLastTimeStamp, lastLastFetched, batch := get_new_records(db, table, dbBatchSize, tableData["track_column"], lastTimeStamp, tableData["id_column"], lastFetched)
+					// Update the last seen timestamp of processed record
+					// or store IDs of records belonging to the same timestamp to exclude them from the next select
+					// to avoid duplication
+					ts, ok := trackTablesTs[table]["lastTimeStamp"].(time.Time)
+					if !ok {
+						log.Fatal(fmt.Printf("Type Error: %s", ts))
+					}
+					if lastLastTimeStamp.After(ts) {
+						trackTablesTs[table]["lastTimeStamp"] = lastLastTimeStamp
+						trackTablesTs[table]["lastFetched"] = lastFetched[:0]
+					} else {
+						trackTablesTs[table]["lastFetched"] = append(lastFetched, lastLastFetched...)
+					}
+					batchSubmit = append(batchSubmit, batch...)
+					if len(batchSubmit) >= kassetteBatchSize {
+						startWorker(batchSubmit) //submit a batch if number of records enough
+						batchSubmit = nil
+					}
 				}
-				lastLastTimestamp, lastLastFetched, batch := get_new_records(db, table, dbBatchSize, tableData["track_column"], lastTimestamp, tableData["id_column"], lastFetched)
-				// Update the last seen timestamp of processed record
-				// or store IDs of records belonging to the same timestamp to exclude them from the next select
-				// to avoid duplication
-				ts, ok := trackTablesTs[table]["lastTimestamp"].(time.Time)
-				if !ok {
-					log.Fatal("Type Error")
-				}
-				if lastLastTimestamp.After(ts) {
-					trackTablesTs[table]["lastTimestamp"] = lastLastTimestamp
-					trackTablesTs[table]["lastFetched"] = lastFetched[:0]
-				} else {
-					trackTablesTs[table]["lastFetched"] = append(lastFetched, lastLastFetched...)
-				}
-				batchSubmit = append(batchSubmit, batch...)
-				if len(batchSubmit) >= kassetteBatchSize {
-					startWorker(batchSubmit) //submit a batch if number of records enough
-					batchSubmit = nil
-				}
+
 			}
 			if len(batchSubmit) > 0 { //submit a batch if anything left after a cycle
 				startWorker(batchSubmit)
