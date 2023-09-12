@@ -1,5 +1,7 @@
 ### kassette-postgres-agent 
 kassette-postgres-agent intended to run on customer environment and collect neccesary Data and push it back to kassette-server
+Camunda is the first integration supported by the agent. 
+Agent accesses camunda database directly and polls history tables. 
 Data sent to the kassette-server via REST API 
 
 ### run kassette agent locally in docker
