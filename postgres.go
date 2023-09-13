@@ -103,7 +103,7 @@ func startWorker(activitiInstances []map[string]interface{}) {
 	submitPayload(jsonData, "batch")
 }
 
-func get_new_records_by_id(dbHandler *sql.DB, tableName string, dbBatchSize string, trackPosition int, idColumn string) (int64, []map[string]interface{}) {
+func get_new_records_by_id(dbHandler *sql.DB, tableName string, dbBatchSize string, idColumn string, trackPosition int64) (int64, []map[string]interface{}) {
 	var lastTrackPosition int64
 	var ok bool
 
@@ -202,8 +202,8 @@ func get_new_records(dbHandler *sql.DB, tableName string, dbBatchSize string, tr
 			record[column] = val
 		}
 		//Adding Kassette Metadata
-		record["kassette_data_agent"] = "camunda"
-		record["kassette_data_type"] = tableName
+		//record["kassette_data_agent"] = "camunda"
+		//record["kassette_data_type"] = tableName
 
 		fetchedId, ok := record[idColumn].(string)
 		if !ok {
@@ -268,7 +268,7 @@ func main() {
 
 	psqlInfo := GetConnectionString()
 	lastTimeStamp := time.Now().Add(-2 * time.Hour) //start ingesting data 2 hours back after restart
-	lastStamp := 0
+	var lastStamp int64 = 0
 	batchSubmit := make([]map[string]interface{}, 0)
 	kassetteBatchSize := viper.GetInt("kassette-server.batchSize")
 	//read tables settings into Map
@@ -335,6 +335,18 @@ func main() {
 						startWorker(batchSubmit) //submit a batch if number of records enough
 						batchSubmit = nil
 					}
+				} else if tableData["tracking"] == "id" {
+					lastId, ok := trackTablesTs[table]["lastId"].(int64)
+					if !ok {
+						log.Fatal(fmt.Printf("Type Error: %s", lastId))
+					}
+					lastStamp, batch := get_new_records_by_id(db, table, dbBatchSize, tableData["id_column"], lastId)
+					batchSubmit = append(batchSubmit, batch...)
+					if len(batchSubmit) >= kassetteBatchSize {
+						startWorker(batchSubmit) //submit a batch if number of records enough
+						batchSubmit = nil
+					}
+					trackTablesTs[table]["lastId"] = lastStamp
 				}
 
 			}
