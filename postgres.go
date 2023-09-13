@@ -108,7 +108,7 @@ func get_new_records_by_id(dbHandler *sql.DB, tableName string, dbBatchSize stri
 	var ok bool
 
 	query := fmt.Sprintf("SELECT * FROM %s where %s > $1 order by %s limit %s;", tableName, idColumn, idColumn, dbBatchSize)
-	log.Printf(query)
+	log.Printf(fmt.Sprintf("query: %s, trackposition: %v", query, trackPosition))
 	// Execute the SQL statement and retrieve the rows
 	rows, err := dbHandler.QueryContext(context.Background(), query, trackPosition)
 	if err != nil {
