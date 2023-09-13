@@ -104,7 +104,7 @@ func startWorker(activitiInstances []map[string]interface{}) {
 }
 
 func get_new_records_by_id(dbHandler *sql.DB, tableName string, dbBatchSize string, idColumn string, trackPosition int64) (int64, []map[string]interface{}) {
-	var lastTrackPosition int64
+	var lastTrackPosition int64 = trackPosition
 	var ok bool
 
 	query := fmt.Sprintf("SELECT * FROM %s where %s > $1 order by %s limit %s;", tableName, idColumn, idColumn, dbBatchSize)
