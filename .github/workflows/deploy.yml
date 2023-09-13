@@ -23,8 +23,6 @@ jobs:
       id: install
     - name: add metaops helm repo
       run: helm repo add metaops https://metaops-solutions.github.io/helm-charts
-    - name: install release
-      run: helm upgrade -i --wait --timeout 5m -n kassette-dev kassette-postgres-agent metaops/kassette-agent --set config.database.user=camundadiy,config.database.password=camundadiy,config.database.host=postgres-postgresql-hl.camunda-diy.svc,config.database.name=workflow,config.kassette-server.url='http://kassette-server.kassette-dev.svc',image.tag=$DOCKER_TAG,config.kassette-agent.customerName=Camunda_Customer,config.kassette-agent.secretKey=zhq9oNb0cY41DdwuJzR1694175593644
     - name: install release for registry
-      run: helm upgrade -i --wait --timeout 5m -n kassette-dev kassette-postgres-agent-registry metaops/kassette-agent --set config.database.user=camundadiy,config.database.password=camundadiy,config.database.host=postgres-postgresql-hl.camunda-diy.svc,config.database.name=regworkflow,config.kassette-server.url='http://kassette-server.kassette-dev.svc',image.tag=$DOCKER_TAG,config.kassette-agent.customerName=Camunda_Customer,config.kassette-agent.secretKey=nBeAYverCI6rfnJhApx1694174980893
+      run: helm upgrade -i --wait --timeout 5m -n kassette-dev kassette-postgres-agent-registry metaops/kassette-agent --set config.database.user=camundadiy,config.database.password=camundadiy,config.database.host=postgres-postgresql-hl.camunda-diy.svc,config.database.name=regworkflow,config.kassette-server.url='http://kassette-server.kassette-dev.svc',image.tag=$DOCKER_TAG,config.kassette-agent.customerName=Camunda_Customer,config.kassette-agent.secretKey=Uk7CK59i1kpwrbUw7jx1694609424240,config.tables.death_registration.track_column=id,config.tables.death_registration.id_column=id
 
