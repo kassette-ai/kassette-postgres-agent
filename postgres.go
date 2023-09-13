@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -45,17 +46,14 @@ func GetConnectionString() string {
 func submitPayload(jsonData []byte, payloadType string) {
 	var url string
 	baseUrl := viper.GetString("kassette-server.url")
-	uid := viper.GetString("kassette-agent.uid")
+	customerName := viper.GetString("kassette-agent.customerName")
+	secretKey := viper.GetString("kassette-agent.secretKey")
+	auth := customerName + ":" + secretKey // Set auth header to UID
+	basicAuth := "Basic " + base64.StdEncoding.EncodeToString([]byte(auth))
 	maxAttempts := 20
 	initialBackoff := 1 * time.Second
 	maxBackoff := 10 * time.Second
-	if payloadType == "batch" {
-		url = baseUrl + "/extract"
-	} else if payloadType == "configtable" {
-		url = baseUrl + "/configtable"
-	} else {
-		log.Fatal("Unknown payload type: ", payloadType)
-	}
+	url = baseUrl + "/extract"
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 
 		req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
@@ -64,7 +62,9 @@ func submitPayload(jsonData []byte, payloadType string) {
 			return
 		}
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("write_key", uid)
+		req.Header.Set("Authorization", basicAuth)
+		req.Header.Set("Kassette-Customer-Name", customerName)
+		req.Header.Set("Kassette-Secret-Key", secretKey)
 		// Send the request
 		client := &http.Client{}
 		resp, err := client.Do(req)
@@ -108,6 +108,7 @@ func get_new_records_by_id(dbHandler *sql.DB, tableName string, dbBatchSize stri
 	var ok bool
 
 	query := fmt.Sprintf("SELECT * FROM %s where %s > $1 order by %s;", tableName, idColumn, dbBatchSize)
+	log.Printf(query)
 	// Execute the SQL statement and retrieve the rows
 	rows, err := dbHandler.QueryContext(context.Background(), query, trackPosition)
 	if err != nil {
@@ -143,9 +144,6 @@ func get_new_records_by_id(dbHandler *sql.DB, tableName string, dbBatchSize stri
 			val := *(values[i].(*interface{}))
 			record[column] = val
 		}
-		//Adding Kassette Metadata
-		record["kassette_data_agent"] = "camunda"
-		record["kassette_data_type"] = tableName
 
 		data = append(data, record)
 		lastTrackPosition, ok = record[idColumn].(int64)
@@ -225,32 +223,6 @@ func get_new_records(dbHandler *sql.DB, tableName string, dbBatchSize string, tr
 		log.Fatal(err)
 	}
 	return lastTrackPosition, fetchedIds, data
-}
-func get_table_schema(dbHandler *sql.DB, tableName string) []map[string]string {
-	query := fmt.Sprintf("SELECT column_name,data_type FROM information_schema.columns WHERE table_name = '%s';", tableName)
-	// Execute the SQL statement and retrieve the rows
-	rows, err := dbHandler.QueryContext(context.Background(), query)
-	if err != nil {
-		log.Fatal(err)
-	}
-	var keyValuePairs []map[string]string
-
-	for rows.Next() {
-		var key, value string
-		err := rows.Scan(&key, &value)
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		pair := map[string]string{
-			key: value,
-		}
-
-		keyValuePairs = append(keyValuePairs, pair)
-	}
-
-	return keyValuePairs
-
 }
 
 func main() {

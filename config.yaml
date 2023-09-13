@@ -11,7 +11,8 @@ kassette-server:
   url: http://localhost:8088
   batchSize: 3
 kassette-agent:
-  uid: camunda
+  customerName: Camunda_Customer
+  secretKey: Uk7CK59i1kpwrbUw7jx1694609424240
 tables:
   service_catalogue:
     track_column: id
