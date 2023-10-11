@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/robfig/cron/v3"
+
 	_ "github.com/lib/pq"
 	"github.com/spf13/viper"
 )
@@ -225,6 +227,54 @@ func get_new_records(dbHandler *sql.DB, tableName string, dbBatchSize string, tr
 	return lastTrackPosition, fetchedIds, data
 }
 
+func run_query(dbHandler *sql.DB, query string) {
+	rows, err := dbHandler.QueryContext(context.Background(), query)
+	if err != nil {
+		log.Fatal(err)
+	}
+	data := make([]map[string]interface{}, 0)
+	// Iterate over the rows
+	for rows.Next() {
+		// Create a map to hold the row data
+		record := make(TableRow)
+
+		// Get the column names
+		columns, err := rows.Columns()
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		// Create a slice to hold the column values
+		values := make([]interface{}, len(columns))
+		for i := range values {
+			values[i] = new(interface{})
+		}
+
+		// Scan the row values into the slice
+		err = rows.Scan(values...)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		// Convert the row values into a JSON object
+		for i, column := range columns {
+			val := *(values[i].(*interface{}))
+			record[column] = val
+		}
+
+		data = append(data, record)
+	}
+
+	// Check for any errors during iteration
+	err = rows.Err()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	log.Printf("Data to be submited: %s", data)
+	startWorker(data)
+}
+
 func main() {
 	// Load Config file
 	viper.SetConfigFile("config.yaml")
@@ -239,7 +289,7 @@ func main() {
 	}
 
 	psqlInfo := GetConnectionString()
-	lastTimeStamp := time.Now().Add(-2 * time.Hour) //start ingesting data 2 hours back after restart
+	lastTimeStamp := time.Now()
 	var lastStamp int64 = 0
 	batchSubmit := make([]map[string]interface{}, 0)
 	kassetteBatchSize := viper.GetInt("kassette-server.batchSize")
@@ -274,6 +324,25 @@ func main() {
 		log.Fatal(err)
 	}
 	defer db.Close()
+
+	querries := viper.GetStringMapString("querries")
+	// Create a new cron scheduler.
+	c := cron.New()
+
+	for queryName, _ := range querries {
+		query := viper.GetString("querries." + queryName + ".sql")
+		schedule := viper.GetString("querries." + queryName + ".schedule")
+
+		// Schedule a job acording to schedule
+		_, err := c.AddFunc(schedule, func() { run_query(db, query) })
+		if err != nil {
+			log.Printf("Error scheduling job: %v", err)
+			return
+		}
+	}
+
+	c.Start()
+	select {}
 
 	// Create a ticker that polls the database every 10 seconds
 	ticker := time.NewTicker(10 * time.Second)

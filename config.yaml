@@ -1,25 +1,29 @@
 ---
 database:
-  host: localhost
-  user: camunda
-  name: workflow
-  password: camunda
-  port: 5431
+  host: postgres
+  user: kassette_user
+  name: kassette
+  password: password
+  port: 5432
   ssl_mode: disable
   batchSize: 2
 kassette-server:
-  url: http://localhost:8088
+  url: http://kassette-server:8088
   batchSize: 3
 kassette-agent:
-  customerName: Camunda_Customer
-  secretKey: Uk7CK59i1kpwrbUw7jx1694609424240
-tables:
-  service_catalogue:
-    track_column: id
-    id_column: id
+  customerName: Postgres_Custome
+  secretKey: N6zZJMtnYqlwnytYXPk1696597800067
+#tables:
+#  service_catalogue:
+#    track_column: id
+#    id_column: id
 #  act_hi_actinst:
 #    track_column: start_time_
 #    id_column: id_
 #  act_hi_detail:
 #    track_column: time_
-#    id_column: id_    
+#    id_column: id_  
+querries:
+  users:
+    sql: "select * from service_catalogue;"
+    schedule: "* * * * *"
