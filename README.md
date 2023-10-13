@@ -18,5 +18,7 @@ git tag -a v1.0.0 -m "First tagged release of the kassette-postgres-agent"
 git push --tags
 ```
 
+### Status
+This software is at the state of Proof of Concept and not ready to be used in live environments
 
 ### Usage
