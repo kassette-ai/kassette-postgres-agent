@@ -1,6 +1,6 @@
 ---
 database:
-  host: postgres
+  host: localhost
   user: kassette_user
   name: kassette
   password: password
@@ -8,11 +8,12 @@ database:
   ssl_mode: disable
   batchSize: 2
 kassette-server:
-  url: http://kassette-server:8088
+  url: http://localhost:8088
   batchSize: 3
 kassette-agent:
   customerName: Postgres_Custome
-  secretKey: N6zZJMtnYqlwnytYXPk1696597800067
+  secretKey: uLmo1h3OJxrPqZLFKQK1700170626886
+  mode: cron # cron - run query on cron, or track - track table by id or by timestamp
 #tables:
 #  service_catalogue:
 #    track_column: id
@@ -25,5 +26,5 @@ kassette-agent:
 #    id_column: id_  
 querries:
   users:
-    sql: "select * from service_catalogue;"
+    sql: "select * from destination;"
     schedule: "* * * * *"

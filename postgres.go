@@ -293,28 +293,7 @@ func main() {
 	var lastStamp int64 = 0
 	batchSubmit := make([]map[string]interface{}, 0)
 	kassetteBatchSize := viper.GetInt("kassette-server.batchSize")
-	//read tables settings into Map
-	var trackTables map[string]map[string]string
-	var trackTablesTs map[string]map[string]interface{}
-	trackTablesTs = make(map[string]map[string]interface{})
-	trackTables = make(map[string]map[string]string)
-	for table, _ := range viper.GetStringMapString("tables") {
-		trackTablesTs[table] = make(map[string]interface{})
-		trackTables[table] = make(map[string]string)
-		for tableSettingKey, tableSettingValue := range viper.GetStringMapString("tables." + table) {
-			trackTables[table][tableSettingKey] = tableSettingValue
-		}
-
-		if trackTables[table]["track_column"] == trackTables[table]["id_column"] {
-			trackTables[table]["tracking"] = "id"
-			trackTablesTs[table]["lastId"] = lastStamp
-		} else {
-			trackTables[table]["tracking"] = "time"
-			trackTablesTs[table]["lastTimeStamp"] = lastTimeStamp
-			trackTablesTs[table]["lastFetched"] = make([]string, 0)
-		}
-
-	}
+	kassetteAgetntMode := viper.GetString("kassette-agent.mode")
 
 	dbBatchSize := viper.GetString("database.batchSize")
 	log.Printf("Connecting to Database: %s\n", psqlInfo)
@@ -325,76 +304,105 @@ func main() {
 	}
 	defer db.Close()
 
-	querries := viper.GetStringMapString("querries")
-	// Create a new cron scheduler.
-	c := cron.New()
+	if kassetteAgetntMode == "track" {
+		//read tables settings into Map
+		var trackTables map[string]map[string]string
+		var trackTablesTs map[string]map[string]interface{}
+		trackTablesTs = make(map[string]map[string]interface{})
+		trackTables = make(map[string]map[string]string)
+		for table, _ := range viper.GetStringMapString("tables") {
+			trackTablesTs[table] = make(map[string]interface{})
+			trackTables[table] = make(map[string]string)
+			for tableSettingKey, tableSettingValue := range viper.GetStringMapString("tables." + table) {
+				trackTables[table][tableSettingKey] = tableSettingValue
+			}
 
-	for queryName, _ := range querries {
-		query := viper.GetString("querries." + queryName + ".sql")
-		schedule := viper.GetString("querries." + queryName + ".schedule")
+			if trackTables[table]["track_column"] == trackTables[table]["id_column"] {
+				trackTables[table]["tracking"] = "id"
+				trackTablesTs[table]["lastId"] = lastStamp
+			} else {
+				trackTables[table]["tracking"] = "time"
+				trackTablesTs[table]["lastTimeStamp"] = lastTimeStamp
+				trackTablesTs[table]["lastFetched"] = make([]string, 0)
+			}
 
-		// Schedule a job acording to schedule
-		_, err := c.AddFunc(schedule, func() { run_query(db, query) })
-		if err != nil {
-			log.Printf("Error scheduling job: %v", err)
-			return
 		}
-	}
+		// Create a ticker that polls the database every 10 seconds
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
 
-	c.Start()
-	select {}
+		for {
+			select {
+			case <-ticker.C:
+				for table, tableData := range trackTables {
+					if tableData["tracking"] == "time" {
+						lastFetched, ok := trackTablesTs[table]["lastFetched"].([]string)
+						if !ok {
+							log.Fatal("Type Error Array of strings")
+						}
+						lastLastTimeStamp, lastLastFetched, batch := get_new_records(db, table, dbBatchSize, tableData["track_column"], lastTimeStamp, tableData["id_column"], lastFetched)
+						// Update the last seen timestamp of processed record
+						// or store IDs of records belonging to the same timestamp to exclude them from the next select
+						// to avoid duplication
+						ts, ok := trackTablesTs[table]["lastTimeStamp"].(time.Time)
+						if !ok {
+							log.Fatal(fmt.Printf("Type Error: %s", ts))
+						}
+						if lastLastTimeStamp.After(ts) {
+							trackTablesTs[table]["lastTimeStamp"] = lastLastTimeStamp
+							trackTablesTs[table]["lastFetched"] = lastFetched[:0]
+						} else {
+							trackTablesTs[table]["lastFetched"] = append(lastFetched, lastLastFetched...)
+						}
+						batchSubmit = append(batchSubmit, batch...)
+						if len(batchSubmit) >= kassetteBatchSize {
+							startWorker(batchSubmit) //submit a batch if number of records enough
+							batchSubmit = nil
+						}
+					} else if tableData["tracking"] == "id" {
+						lastId, ok := trackTablesTs[table]["lastId"].(int64)
+						if !ok {
+							log.Fatal(fmt.Printf("Type Error: %s", lastId))
+						}
+						lastStamp, batch := get_new_records_by_id(db, table, dbBatchSize, tableData["id_column"], lastId)
+						batchSubmit = append(batchSubmit, batch...)
+						if len(batchSubmit) >= kassetteBatchSize {
+							startWorker(batchSubmit) //submit a batch if number of records enough
+							batchSubmit = nil
+						}
+						trackTablesTs[table]["lastId"] = lastStamp
+					}
 
-	// Create a ticker that polls the database every 10 seconds
-	ticker := time.NewTicker(10 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ticker.C:
-			for table, tableData := range trackTables {
-				if tableData["tracking"] == "time" {
-					lastFetched, ok := trackTablesTs[table]["lastFetched"].([]string)
-					if !ok {
-						log.Fatal("Type Error Array of strings")
-					}
-					lastLastTimeStamp, lastLastFetched, batch := get_new_records(db, table, dbBatchSize, tableData["track_column"], lastTimeStamp, tableData["id_column"], lastFetched)
-					// Update the last seen timestamp of processed record
-					// or store IDs of records belonging to the same timestamp to exclude them from the next select
-					// to avoid duplication
-					ts, ok := trackTablesTs[table]["lastTimeStamp"].(time.Time)
-					if !ok {
-						log.Fatal(fmt.Printf("Type Error: %s", ts))
-					}
-					if lastLastTimeStamp.After(ts) {
-						trackTablesTs[table]["lastTimeStamp"] = lastLastTimeStamp
-						trackTablesTs[table]["lastFetched"] = lastFetched[:0]
-					} else {
-						trackTablesTs[table]["lastFetched"] = append(lastFetched, lastLastFetched...)
-					}
-					batchSubmit = append(batchSubmit, batch...)
-					if len(batchSubmit) >= kassetteBatchSize {
-						startWorker(batchSubmit) //submit a batch if number of records enough
-						batchSubmit = nil
-					}
-				} else if tableData["tracking"] == "id" {
-					lastId, ok := trackTablesTs[table]["lastId"].(int64)
-					if !ok {
-						log.Fatal(fmt.Printf("Type Error: %s", lastId))
-					}
-					lastStamp, batch := get_new_records_by_id(db, table, dbBatchSize, tableData["id_column"], lastId)
-					batchSubmit = append(batchSubmit, batch...)
-					if len(batchSubmit) >= kassetteBatchSize {
-						startWorker(batchSubmit) //submit a batch if number of records enough
-						batchSubmit = nil
-					}
-					trackTablesTs[table]["lastId"] = lastStamp
 				}
-
-			}
-			if len(batchSubmit) > 0 { //submit a batch if anything left after a cycle
-				startWorker(batchSubmit)
-				batchSubmit = nil
+				if len(batchSubmit) > 0 { //submit a batch if anything left after a cycle
+					startWorker(batchSubmit)
+					batchSubmit = nil
+				}
 			}
 		}
+
+	} else if kassetteAgetntMode == "cron" {
+		querries := viper.GetStringMapString("querries")
+		// Create a new cron scheduler.
+		c := cron.New()
+
+		for queryName, _ := range querries {
+			query := viper.GetString("querries." + queryName + ".sql")
+			schedule := viper.GetString("querries." + queryName + ".schedule")
+
+			// Schedule a job acording to schedule
+			_, err := c.AddFunc(schedule, func() { run_query(db, query) })
+			if err != nil {
+				log.Printf("Error scheduling job: %v", err)
+				return
+			}
+		}
+
+		c.Start()
+		select {}
+
+	} else {
+		log.Fatal(fmt.Printf("Unknown running mode: %s", kassetteAgetntMode))
 	}
+
 }
